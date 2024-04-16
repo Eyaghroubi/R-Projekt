@@ -1,0 +1,619 @@
+######################################################
+####### Fallstudie 1 Projekt 3 #######################
+###   Bestimmende Faktoren der Spielstärke: ##########
+###   Eine lineare Regressionsanalyse im Fußball #####
+######################################################
+
+
+install.packages("ggplot2")
+library("ggplot2")
+install.packages("glmnet")
+library("glmnet")
+install.packages("car")
+library("car")
+library("dplyr")
+
+
+# Daten einladen
+
+Fifa_data <- read.csv2("C:/Users/natha/Documents/RFallstudien/Fallstudien/FIFA22.csv", header= T, sep=";")
+staff_data <- read.csv2("C:/Users/natha/Documents/RFallstudien/Fallstudien/FIFAMitarbeiter.csv", header= T, sep = ",")
+
+# Anzahl der fehlenden Werte
+sum(is.na(Fifa_data))
+# 30095
+
+# Bei welchen Variablen gibt es fehlende Werte?
+colSums(is.na(Fifa_data))
+# goalkeeping_speed 
+# 17107
+
+# shooting                     passing                   dribbling 
+# 2132                        2132                        2132 
+# defending                   physic           
+# 2132                        2132                           
+# pace 
+# 2132
+
+# wage_eur                        
+# 61                                                    
+
+# club_team_id                    
+# 61   
+
+# value_eur 
+# 74
+
+# Datensatz auf Feldspieler begrenzen und nur für Torwarte relevante Variablen entfernen:
+# Warum? Weil dann viele NAs rausfallen, weil uns in der Fragestellung nur die Feldspieler
+# interssieren und Torwarte eigene Variablen haben und aseparat zu betrachten sind
+
+fifa <- subset(Fifa_data, player_positions != "GK")
+fifa <- subset(fifa, select= -c(goalkeeping_speed,goalkeeping_reflexes,goalkeeping_positioning,goalkeeping_kicking,goalkeeping_handling,goalkeeping_diving)) 
+
+colSums(is.na(fifa))
+
+# value_eur 
+# 66 
+# wage_eur                 
+# 53                
+# club_team_id
+# 53                          
+
+sum(is.na(fifa))
+# 172 
+
+# Datensatz ohne nas
+fifa_clean <- na.omit(fifa)
+
+#### Frage 1:  ########################################################################################
+# Untersuchen Sie den Zusammenhang zwischen Spielerwert und fürs Tore schießen relevanter Attribute ###
+# (wie attacking_finishing, attacking_volleys, skill_fk_accuracy, power_long_shots, . . . )         ###
+# um den Spruch Geld schießt Tore zu bewerten.                                                      ###
+# Was fällt Ihnen auf, wenn Sie generell die Zusammenhänge zwischen den Parametern betrachten?      ###
+#######################################################################################################
+
+#Streudiagramme fuer sechs interessierende Variablen in Zusammenhang mit dem Spielerwert
+# und Korrelationen nach Spearman für die sechs Variablen
+
+# Spielwert in Mio umrechnen
+
+fifa_clean$value_eur_new <- fifa_clean$value_eur/1000000
+
+# plots in einer Grafik für einen besseren Vergleich
+par(mfrow=c(3,2))
+
+#attacking_finishing
+
+plot(fifa_clean$value_eur_new,fifa_clean$attacking_finishing, xlab = "Spielerwert (in Mio EUR)", ylab="attacking_finishing", main ="Abschluss beim Angriff")
+
+cor(fifa_clean$value_eur, fifa_clean$attacking_finishing,method="spearman")
+#0.3934719
+
+
+#attacking_volleys
+
+plot(fifa_clean$value_eur_new,fifa_clean$attacking_volleys, xlab = "Spielerwert (in Mio EUR)", ylab="attacking_volleys", main="Volleys beim Angriff")
+
+cor(fifa_clean$value_eur, fifa_clean$attacking_volleys,method="spearman")
+#0.3892892
+
+
+#skill_fk_accuracy
+
+plot(fifa_clean$value_eur_new,fifa_clean$skill_fk_accuracy, xlab = "Spielerwert (in Mio EUR)", ylab="skill_fk_accuracy", main="Freistoß-Präzision")
+
+cor(fifa_clean$value_eur, fifa_clean$skill_fk_accuracy,method="spearman")
+#0.3471416
+
+
+#power_long_shots
+
+plot(fifa_clean$value_eur_new,fifa_clean$power_long_shots, xlab = "Spielerwert (in Mio EUR)", ylab="power_long_shots", main="Schusskraft Fernschüsse")
+
+cor(fifa_clean$value_eur, fifa_clean$power_long_shots,method="spearman")
+#0.46343
+
+
+# power_shot_power
+plot(fifa_clean$value_eur_new,fifa_clean$power_shot_power, xlab = "Spielerwert (in Mio EUR)", ylab="power_shot_power", main="Schusskraft")
+
+cor(fifa_clean$value_eur, fifa_clean$power_shot_power,method="spearman")
+#0.5172229
+
+
+# attacking_heading_accuracy
+plot(fifa_clean$value_eur_new,fifa_clean$attacking_heading_accuracy, xlab = "Spielerwert (in Mio EUR)", ylab="attacking_heading_accuracy", main="Kopfball-Präzision")
+
+cor(fifa_clean$value_eur, fifa_clean$attacking_heading_accuracy,method="spearman")
+#0.3675817
+
+
+#### Frage 2:  #######################################################################################
+# Welche Eigenschaften haben einen Einfluss auf die Spielstaerke (overall)?                         ###
+# Fuehren Sie, eine lineare Regressionsanalyse der Daten aller Feldspieler durch.                   ###
+# (die Anforderungen an einen Torwart unterscheiden sich deutlich)                                 ###
+# Hierbei sollten Sie nur sinnvolle Variablen nutzen, und die Voraussetzungen beachten.            ###
+######################################################################################################
+
+### Lasso Regression vorbereiten und durchführen ###
+
+# Datensat auf sinnvolle Variablen begrenzen
+
+fifa_sinnvoll <- subset(fifa_clean, select= c(overall, attacking_crossing , attacking_finishing, attacking_heading_accuracy,
+                                                        attacking_short_passing , attacking_volleys , skill_dribbling , skill_curve ,
+                                                        skill_fk_accuracy , skill_long_passing , skill_ball_control , movement_acceleration ,
+                                                        movement_sprint_speed , movement_agility , movement_reactions , movement_balance,power_shot_power,           
+                                                        power_jumping, power_stamina , power_strength,power_long_shots,  mentality_aggression , mentality_interceptions,mentality_positioning ,mentality_vision ,mentality_penalties,       
+                                                        mentality_composure ,defending_marking_awareness ,defending_standing_tackle ,
+                                                        defending_sliding_tackle
+) )
+
+# jetzt keine NAs mehr drin:
+colSums(is.na(fifa_sinnvoll))
+# weak_foot ist anders skalliert als der rest, keine metrische variable
+# genauso prefered foot raus, weil nicht metrisch!
+# alter anders skalliert, deshalb auch raus
+# Höhe ebenfalls
+
+# qwir nehmen nur die, die nicht auseinander berechnet werden
+
+#overall ist nicht irrelevant korreliert mit "potential"
+# potencial gibt den maiximalen overall wert an den ein spieler erreichen kann
+# daher macht es für analyse keinen Sinn oder? Erreicht den höchsten Koeffizientenwert ueber Lasso
+cor(fifa_clean$overall,fifa_clean$potential,method = "spearman")
+# 0.5667325
+
+# potential bedeutet: Das was ein Spieler maximal erreichen kann im Laufe seiner Karriere
+# also peak overall rating
+# https://fifacareermodetips.com/guides/understanding-potential/
+
+# Spielstärke als y definieren, die zu erklärende, unabhänige Variable (Regressant)
+y <- fifa_sinnvoll$overall
+
+#Die erklärenden, abhängigen Variablen (Regressoren) auswählen, in dem Fall alle anderen
+x <- data.matrix(subset(fifa_sinnvoll, select = -c(overall)))
+
+#Daten normalisieren
+x <- scale(x)
+y <- scale(y)
+
+
+set.seed(123) # Für reproduzierbare Ergebnisse
+
+# Kreuzvalisierung um das beste lambda zu finden und damit das beste Modell
+cv_model <- cv.glmnet(x, y, alpha = 1,intercept = F)
+
+bestes_lambda <- cv_model$lambda.min
+#0.003469343
+
+# Plot der lambda werte
+par(mfrow=c(1,1))
+plot(cv_model) 
+
+bestes_modell <- glmnet(x, y, alpha = 1, lambda = bestes_lambda)
+coef <- coef(bestes_modell)
+format(coef[,1], scientific=F)
+
+# Heteroskedastizitaet pruefen
+y_dach <- predict(bestes_modell,s = bestes_lambda, newx = x)
+
+plot(y_dach, y - y_dach)
+abline(h = 0, col = "red")
+
+# Koeffizienten als Matrix extrahieren und in DataFrame umwandeln
+coefficients_matrix <- as.matrix(coef(bestes_modell, s = bestes_lambda))
+coefficients_df <- data.frame(
+  feature = rownames(coefficients_matrix),
+  coefficient = coefficients_matrix[, 1]
+)
+
+# Entfernen des Intercept
+coefficients_df <- coefficients_df[-1, ]
+
+# Erstellen des Koeffizientenplots
+ggplot(coefficients_df, aes(x = feature, y = coefficient())) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Attribute") +
+  ylab("Koeffizienten") +
+  ggtitle("Koeffizienten der Lasso-Regressionsanalyse")
+
+
+
+#R² berechnen für Lasso-Modell
+
+#SST and SSE bestimmen
+sst <- sum((y - mean(y))^2)
+sse <- sum((y_dach - y)^2)
+
+#R² berechnen
+R2 <- 1 - sse/sst
+R2
+#0.9139321, wir erklären knapp 92 Prozent der Varianz mit unserem Modell
+
+
+#### Frage 3:  ########################################################################################
+# Ein Trainer aus der 2. Bundesliga sagte "Defensives Spiel ist Wille, offensives Spiel ist Können" ###
+# Heißt u. a.: für unterschiedliche Positionen werden verschiedene Fähigkeiten benötigt.           ####
+# Führen Sie eine Subgruppenanalyse durch                                                          ####
+# indem Sie obige Analyse getrennt für Verteidigung, Mittelfeld und Sturm durchführen (s. Tabelle) ####
+# Wo finden Sie deutliche Unterschiede, was bleibt unverändert?                                    ####
+# Inwiefern bestätigt sich die Aussage des Trainers?                                               ####
+#######################################################################################################
+
+#Datensatz begrenzen wie bei 2 aber player position zunaechst drin lassen um Einteilen der Gruppen
+
+fifa_sinnvoll_1 <- subset(fifa_clean, select= c(overall, attacking_crossing , attacking_finishing, attacking_heading_accuracy,
+                                              attacking_short_passing , attacking_volleys , skill_dribbling , skill_curve ,
+                                              skill_fk_accuracy , skill_long_passing , skill_ball_control , movement_acceleration ,
+                                              movement_sprint_speed , movement_agility , movement_reactions , movement_balance,power_shot_power,           
+                                              power_jumping, power_stamina , power_strength,power_long_shots,  mentality_aggression , mentality_interceptions,mentality_positioning ,mentality_vision ,mentality_penalties,       
+                                              mentality_composure ,defending_marking_awareness ,defending_standing_tackle ,
+                                              defending_sliding_tackle,player_positions
+) )
+
+
+# Herausforderung: Viele Spieler haben mehr als nur eine Position
+sort(table(fifa_clean$player_positions))
+
+length(table(fifa_clean$player_positions))
+# Es gibt 673 verschiedene Positionsformen
+
+# Loesung: 
+# Spieler die z.B. im Mittelfeld und im Sturm spielen kommen in beide Subgruppen
+
+# Wir teilen ansonsten nach Tabelle 1 aus Aufgabenbatt 3 auf:
+
+Verteidigung <- fifa_sinnvoll_1 %>% filter(grepl("RB|CB|LB|RWB|LWB", player_positions))
+Verteidigung <- subset(Verteidigung,select = -c(player_positions))
+  
+Mittelfeld <- fifa_sinnvoll_1 %>% filter(grepl("CDM | CM| CAM| RM |LM", player_positions))
+Mittelfeld <- subset(Mittelfeld,select = -c(player_positions))
+
+Sturm <- fifa_sinnvoll_1 %>% filter(grepl("ST | CF| LW| RW", player_positions))
+Sturm <- subset(Sturm,select = -c(player_positions))
+
+####### Lasso für Verteidigung ############
+
+y_v <- Verteidigung$overall
+
+#Die erklärenden, abhängigen Variablen (Regressoren) auswählen, in dem Fall alle anderen
+x_v <- data.matrix(subset(Verteidigung, select = -c(overall)))
+
+#Daten normalisieren
+x_v <- scale(x_v)
+y_v <- scale(y_v)
+
+
+set.seed(123) # Für reproduzierbare Ergebnisse
+
+# Kreuzvalisierung um das beste lambda zu finden und damit das beste Modell
+cv_model_v <- cv.glmnet(x_v, y_v, alpha = 1,intercept = F)
+
+bestes_lambda_v <- cv_model_v$lambda.min
+
+# Plot der lambda werte
+par(mfrow=c(1,1))
+plot(cv_model_v) 
+
+bestes_modell_v <- glmnet(x_v, y_v, alpha = 1, lambda = bestes_lambda_v)
+coef_v <- coef(bestes_modell_v)
+format(coef_v[,1],scientific=F)
+
+
+# Koeffizienten als Matrix extrahieren und in DataFrame umwandeln
+coefficients_matrix_v <- as.matrix(coef(bestes_modell_v, s = bestes_lambda_v))
+coefficients_df_v <- data.frame(
+  feature = rownames(coefficients_matrix_v),
+  coefficient = coefficients_matrix_v[, 1]
+)
+
+# Entfernen des Intercept
+coefficients_df_v <- coefficients_df_v[-1, ]
+
+# Erstellen des Koeffizientenplots
+ggplot(coefficients_df_v, aes(x = feature, y = coefficient)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Attribute") +
+  ylab("Koeffizienten") +
+  ggtitle("Lasso-Regressionsanalyse Verteidigung")
+
+y_v_dach <- predict(bestes_modell_v,s = bestes_lambda_v, newx = x_v)
+
+# Heteroskedastizitaet pruefen
+
+plot(y_v_dach, y_v - y_v_dach)
+abline(h = 0, col = "red")
+
+#R² berechnen für Lasso-Modell
+
+#SST and SSE bestimmen
+sst <- sum((y_v - mean(y_v))^2)
+sse <- sum((y_v_dach - y_v)^2)
+
+#R² berechnen
+R2 <- 1 - sse/sst
+R2
+#0.9174226
+  
+####### Lasso für Mittelfeld ############
+
+y_m <- Mittelfeld$overall
+
+#Die erklärenden, abhängigen Variablen (Regressoren) auswählen, in dem Fall alle anderen
+x_m <- data.matrix(subset(Mittelfeld, select = -c(overall)))
+
+#Daten normalisieren
+x_m <- scale(x_m)
+y_m <- scale(y_m)
+
+
+set.seed(123) # Für reproduzierbare Ergebnisse
+
+# Kreuzvalisierung um das beste lambda zu finden und damit das beste Modell
+cv_model_m <- cv.glmnet(x_m, y_m, alpha = 1,intercept = F)
+
+bestes_lambda_m <- cv_model_m$lambda.min
+
+# Plot der lambda werte
+par(mfrow=c(1,1))
+plot(cv_model_m) 
+
+bestes_modell_m <- glmnet(x_m, y_m, alpha = 1, lambda = bestes_lambda_m)
+coef_m <- coef(bestes_modell_m)
+format(coef_m[,1],scientific=F)
+
+# Koeffizienten als Matrix extrahieren und in DataFrame umwandeln
+coefficients_matrix_m <- as.matrix(coef(bestes_modell_m, s = bestes_lambda_m))
+coefficients_df_m <- data.frame(
+  feature = rownames(coefficients_matrix_m),
+  coefficient = coefficients_matrix_m[, 1]
+)
+
+# Entfernen des Intercept
+coefficients_df_m <- coefficients_df_v[-1, ]
+
+# Erstellen des Koeffizientenplots
+ggplot(coefficients_df_m, aes(x = feature, y = coefficient)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Attribute") +
+  ylab("Koeffizienten") +
+  ggtitle("Lasso-Regressionsanalyse Mittelfeld")
+
+# y Dach berechnen
+y_m_dach <- predict(bestes_modell_m,s = bestes_lambda_m, newx = x_m)
+
+# Heteroskedastizitaet pruefen
+plot(y_m_dach, y_m - y_m_dach)
+abline(h = 0, col = "red")
+
+#R² berechnen für Lasso-Modell
+
+#SST and SSE bestimmen
+sst <- sum((y_m - mean(y_m))^2)
+sse <- sum((y_m_dach - y_m)^2)
+
+#R² berechnen
+R2 <- 1 - sse/sst
+R2
+#0.9034747
+
+####### Lasso für Sturm ############
+
+y_s <- Sturm$overall
+
+#Die erklärenden, abhängigen Variablen (Regressoren) auswählen, in dem Fall alle anderen
+x_s <- data.matrix(subset(Sturm, select = -c(overall)))
+
+#Daten normalisieren
+x_s <- scale(x_s)
+y_s <- scale(y_s)
+
+
+set.seed(123) # Für reproduzierbare Ergebnisse
+
+# Kreuzvalisierung um das beste lambda zu finden und damit das beste Modell
+cv_model_s <- cv.glmnet(x_s, y_s, alpha = 1,intercept = F)
+
+bestes_lambda_s <- cv_model_s$lambda.min
+
+# Plot der lambda werte
+par(mfrow=c(1,1))
+plot(cv_model_s) 
+
+bestes_modell_s <- glmnet(x_s, y_s, alpha = 1, lambda = bestes_lambda_s)
+coef_s <- coef(bestes_modell_s)
+format(coef_s[,1],scientific=F)
+
+# Koeffizienten als Matrix extrahieren und in DataFrame umwandeln
+coefficients_matrix_s <- as.matrix(coef(bestes_modell_s, s = bestes_lambda_s))
+coefficients_df_s <- data.frame(
+  feature = rownames(coefficients_matrix_s),
+  coefficient = coefficients_matrix_s[, 1]
+)
+
+# Entfernen des Intercept
+coefficients_df_s <- coefficients_df_s[-1, ]
+
+# Erstellen des Koeffizientenplots
+ggplot(coefficients_df_s, aes(x = feature, y = coefficient)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Attribute") +
+  ylab("Koeffizienten") +
+  ggtitle("Lasso-Regressionsanalyse Sturm")
+
+# Heteroskedastizitaet pruefen
+plot(y_s_dach, y_s - y_s_dach)
+abline(h = 0, col = "red")
+
+
+y_s_dach <- predict(bestes_modell_s,s = bestes_lambda_s, newx = x_s)
+
+#R² berechnen für Lasso-Modell
+
+#SST and SSE bestimmen
+sst <- sum((y_s - mean(y_s))^2)
+sse <- sum((y_s_dach - y_s)^2)
+
+#R² berechnen
+R2 <- 1 - sse/sst
+R2
+#0.9198681
+
+
+#### Frage 4:  #####################################################################################
+# Fokussieren Sie sich jetzt auf einen Verein Ihrer Wahl. Damit haben Sie deutlich weniger #########
+# Spieler, die für Ihre Analyse zur Verfügung stehen. Welche Auswirkungen hat diese neue ###########
+# Situation? Führen Sie auch hier eine lineare Regressionsanalyse wie in Punkt 2) durch. ###########
+####################################################################################################
+
+fifa_sinnvoll_2 <- subset(fifa_clean, select= c(overall, attacking_crossing , attacking_finishing, attacking_heading_accuracy,
+                                                attacking_short_passing , attacking_volleys , skill_dribbling , skill_curve ,
+                                                skill_fk_accuracy , skill_long_passing , skill_ball_control , movement_acceleration ,
+                                                movement_sprint_speed , movement_agility , movement_reactions , movement_balance,power_shot_power,           
+                                                power_jumping, power_stamina , power_strength,power_long_shots,  mentality_aggression , mentality_interceptions,mentality_positioning ,mentality_vision ,mentality_penalties,       
+                                                mentality_composure ,defending_marking_awareness ,defending_standing_tackle ,
+                                                defending_sliding_tackle,club_name
+) )
+
+# Daten auf BVB begrenzen
+Dortmund <- subset(fifa_sinnvoll_2, club_name == "Borussia Dortmund") 
+BVB <- subset(Dortmund,select = -c(club_name))
+# 28 Spieler enthalten, also 28 Beobachtungen, also max 28 Variablen beruecksichtigen
+
+# Spielstärke als y definieren, die zu erklärende, unabhänige Variable (Regressant)
+y_bvb <- BVB$overall
+
+#Die erklärenden, abhängigen Variablen (Regressoren) auswählen, in dem Fall alle anderen
+x_bvb <- data.matrix(subset(BVB, select = -c(overall)))
+
+#Daten normalisieren
+x_bvb <- scale(x_bvb)
+y_bvb <- scale(y_bvb)
+
+
+set.seed(123) # Für reproduzierbare Ergebnisse
+
+# Kreuzvalisierung um das beste lambda zu finden und damit das beste Modell
+# Wegen kleinem Datensatz diesmal mit nfolds = 5
+cv_model_bvb <- cv.glmnet(x_bvb, y_bvb, alpha = 1,intercept = F, nfolds = 3)
+
+bestes_lambda_bvb <- cv_model_bvb$lambda.min
+#0.003469343
+
+# Plot der lambda werte
+par(mfrow=c(1,1))
+plot(cv_model_bvb) 
+
+bestes_modell_bvb <- glmnet(x_bvb, y_bvb, alpha = 1, lambda = bestes_lambda_bvb)
+coef <- coef(bestes_modell_bvb)
+format(coef[,1], scientific=F)
+
+# Heteroskedastizitaet pruefen
+y_dach_bvb <- predict(bestes_modell_bvb,s = bestes_lambda_bvb, newx = x_bvb)
+
+plot(y_dach_bvb, y_bvb - y_dach_bvb)
+abline(h = 0, col = "red")
+
+# Koeffizienten als Matrix extrahieren und in DataFrame umwandeln
+coefficients_matrix_bvb <- as.matrix(coef(bestes_modell_bvb, s = bestes_lambda_bvb))
+coefficients_df_bvb <- data.frame(
+  feature = rownames(coefficients_matrix_bvb),
+  coefficient = coefficients_matrix_bvb[, 1]
+)
+
+# Entfernen des Intercept
+coefficients_df_bvb <- coefficients_df_bvb[-1, ]
+
+# Erstellen des Koeffizientenplots
+ggplot(coefficients_df_bvb, aes(x = feature, y = coefficient)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Attribute") +
+  ylab("Koeffizienten") +
+  ggtitle("Koeffizienten der Lasso-Regressionsanalyse")
+
+
+
+#R² berechnen für Lasso-Modell
+
+#SST and SSE bestimmen
+sst_bvb <- sum((y_bvb - mean(y_bvb))^2)
+sse_bvb <- sum((y_dach_bvb - y_bvb)^2)
+
+#R² berechnen
+R2_bvb <- 1 - sse_bvb/sst_bvb
+R2_bvb
+#0.9448095, wir erklären ueber 94 Prozent der Varianz mit unserem Modell
+
+
+
+
+
+
+
+
+
+
+
+#### Frage 5:  ####################################
+# Welche Spielstärke hätten die Mitarbeitenden in dem Verein unserer Wahl? 
+# Und in welchem Bereich (Verteidigung, Mittelfeld, Sturm) sollten Sie eingesetzt werden? 
+# Hinweis: In dieser Aufgabe werden zwar dieselben Methoden verwendet wie
+# zuvor, aber der Zweck ist ein anderer. Dies kann durchaus einen Einfluss haben.
+###################################################################################################
+
+# Spiestaerke der Mitarbeitenden im BVB
+
+staff <- subset(staff_data, select= c(attacking_crossing , attacking_finishing, attacking_heading_accuracy,
+                                      attacking_short_passing , attacking_volleys , skill_dribbling , skill_curve ,
+                                      skill_fk_accuracy , skill_long_passing , skill_ball_control , movement_acceleration ,
+                                      movement_sprint_speed , movement_agility , movement_reactions , movement_balance,power_shot_power,           
+                                      power_jumping, power_stamina , power_strength,power_long_shots,  mentality_aggression , mentality_interceptions,mentality_positioning ,mentality_vision ,mentality_penalties,       
+                                      mentality_composure ,defending_marking_awareness ,defending_standing_tackle ,
+                                      defending_sliding_tackle
+) )
+
+staff_matrix <- as.matrix(staff)
+
+# Werte vorhersagen
+predict(bestes_modell_bvb, s = bestes_lambda_bvb, newx = staff_matrix)
+
+
+# 1 69.18404 Pauly
+# 2 77.22661 Sattler
+# 3 49.88588 Fesca
+# 4 69.68871 Thurow
+
+mean(BVB$overall) 75.49555
+
+# In welchem Bereich sollten sie eingesetzt werden?
+
+mean(staff$movement_reactions)
+# 69.5
+
+mean(staff$skill_ball_control)
+# 51
+
+mean(staff$attacking_short_passing)
+# 53.75
+
+mean(staff$skill_dribbling)
+# 50.5
+
+mean(staff$attacking_crossing)
+# 40.75
+
+mean(staff$defending_marking_awareness)
+# 50.25
+
+mean(staff$defending_standing_tackle)
+# 50
+
+# Verteidigung oder Mittelfeld?!
+
+
