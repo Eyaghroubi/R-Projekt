@@ -1,0 +1,71 @@
+# Pakete laden
+library(dplyr)
+library(caret)
+library(pROC)
+library(rpart)
+library(rpart.plot)
+
+# Daten einlesen
+Youtube <- YouTubeData  # Bitte prüfen, ob 'YouTubeData' korrekt definiert ist
+
+# NA-Werte prüfen
+sum(is.na(Youtube))
+colSums(is.na(Youtube))
+
+# Daten vorbereitung und Bereinigung
+data_aggregated <- Youtube %>%
+  group_by(video_id) %>%
+  summarize(total_countries = n_distinct(country)) %>%
+  ungroup()
+
+Youtube_finale <- Youtube %>%
+  left_join(data_aggregated, by = "video_id") %>%
+  group_by(video_id) %>%
+  arrange(desc(view_count)) %>%
+  slice(1) %>%
+  ungroup()
+
+# Neue Variablen hinzufügen
+Youtube_finale$countries <- ifelse(Youtube_finale$total_countries > 1, 1, 0)
+Youtube_finale$over_5m_views <- ifelse(Youtube_finale$view_count > 5000000, 1, 0)
+Youtube_finale$category_group <- with(Youtube_finale, ifelse(categoryId %in% c(1, 10, 15, 23, 24), 'Creative & Entertainment',
+                                                             ifelse(categoryId %in% c(25, 26, 27, 28, 29), 'Educational & Informative', 'Other Categories')))
+Youtube_finale$category_group <- as.factor(Youtube_finale$category_group)
+
+# Skalierung der numerischen Variablen
+numerical_cols <- c("likes", "comment_count", "duration", "num_tags")
+Youtube_finale[numerical_cols] <- lapply(Youtube_finale[numerical_cols], scale)
+
+# Auswahl der Variablen für das logistische Modell
+Youtube_selection1 <- Youtube_finale %>%
+  select(over_5m_views, likes, comment_count, duration, countries, ratings_disabled, comments_disabled, category_group)
+
+# NA-Werte entfernen (nur für 'duration')
+Youtube_selection1 <- na.omit(Youtube_selection1)
+
+# Modellbildung und Validierung
+set.seed(123)
+index <- createDataPartition(Youtube_selection1$over_5m_views, p = 0.8, list = FALSE)
+train_data <- Youtube_selection1[index, ]
+test_data <- Youtube_selection1[-index, ]
+
+model_log <- glm(over_5m_views ~ ., data = train_data, family = "binomial")
+summary(model_log)
+model_log_optimized <- step(model_log)
+summary(model_log_optimized)
+
+# ROC-Kurve und AUC
+predictions <- predict(model_log_optimized, newdata = test_data, type = "response")
+roc_log <- roc(test_data$over_5m_views, predictions)
+plot(roc_log)
+auc_log <- auc(roc_log)
+print(paste("AUC-Wert: ", auc_log))
+
+# Kreuzvalidierung mit zufälligen Teilmengen und Kategorie-basierten Teilmengen
+model_cv <- train(factor(over_5m_views) ~ ., data = Youtube_selection1, method = "glm", family = "binomial", trControl = trainControl(method = "cv", number = 10))
+model_cv_category <- train(factor(over_5m_views) ~ ., data = Youtube_selection1, method = "glm", family = "binomial", trControl = trainControl(method = "cv", number = 15, index = createFolds(Youtube_selection1$categoryId, k = 15)))
+
+# Ausgabe der Modelle
+print(model_cv)
+print(model_cv_category)
+
